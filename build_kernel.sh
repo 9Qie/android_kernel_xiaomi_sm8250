@@ -73,10 +73,10 @@ mkdir -p "$CCACHE_DIR"
 # ==========================================
 if [ "$ENABLE_KSU" -eq 1 ]; then
     echo "==========================================="
-    echo " [*] Initializing KernelSU (ReSukiSU) Setup"
+    echo " [*] Initializing KernelSU (BakaSU) Setup"
     echo "==========================================="
-    echo "[*] Downloading and running ReSukiSU remote setup script..."
-    curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+    echo "[*] Downloading and running BakaSU remote setup script..."
+    curl -LSs "https://raw.githubusercontent.com/Baka-SU/BakaSU/main/kernel/setup.sh" | bash
     echo "[+] KernelSU setup finished."
 fi
 
@@ -206,10 +206,16 @@ build_target() {
 
     # 2. KernelSU configurations
     if [ "$ENABLE_KSU" -eq 1 ]; then
-        echo "[*] Injecting KernelSU & SUSFS configurations..."
+        echo "[*] Injecting KernelSU (BakaSU) & SUSFS configurations..."
+        # KSU_TRACEPOINT_HOOK / KSU_MANUAL_HOOK / KSU_SUSFS are members of a
+        # Kconfig "choice" and are mutually exclusive.  The choice defaults to
+        # KSU_TRACEPOINT_HOOK (GKI2 only), so it has to be explicitly disabled
+        # before enabling the SUSFS inline-hook variant used on this 4.19 tree.
         scripts/config --file "${OUT_DIR}/.config" \
             -e KSU \
             -e THREAD_INFO_IN_TASK \
+            -d KSU_TRACEPOINT_HOOK \
+            -d KSU_MANUAL_HOOK \
             -e KSU_SUSFS
     fi
 
