@@ -96,16 +96,85 @@ ccache -M "$CCACHE_MAXSIZE" >/dev/null 2>&1 || true
 export KCFLAGS="${KCFLAGS:-} -O2 -pipe"
 
 # ----------------------------------------------------
-# Reproducible build metadata
+# Build metadata masquerade
 # ----------------------------------------------------
-# scripts/mkcompile_h bakes `date` into include/generated/compile.h, which
-# every object that includes <generated/compile.h> picks up.  Pinning the
-# timestamp and identity keeps that header byte-identical between runs so
-# ccache can serve those objects from cache instead of rebuilding them.
-# An explicitly provided value also makes the build reproducible.
-export KBUILD_BUILD_TIMESTAMP="${KBUILD_BUILD_TIMESTAMP:-Thu Jan  1 00:00:00 UTC 2026}"
+# The kernels shipped from this repo must report, unconditionally,
+#
+#     uname -r -> 4.19.157-perf-g19050d39787c
+#     uname -v -> #1 SMP PREEMPT Wed Jun 5 13:37:11 UTC 2024
+#
+# while the tree itself keeps building whatever sources it really has.  Both
+# strings are pure build metadata, so they are substituted here, at build
+# time, and nothing else is touched: no kernel source, no config, no build
+# rule is changed beyond what is listed below, and every rewrite is undone
+# when this script exits.
+#
+# `uname -r` comes from include/config/kernel.release, which the top Makefile
+# regenerates on every run as
+#     $(KERNELVERSION)$(sh scripts/setlocalversion ...)
+# i.e. the VERSION/PATCHLEVEL/SUBLEVEL triple from the Makefile plus whatever
+# scripts/setlocalversion collects.  Hence four things have to line up:
+#   1. the triple is rewritten in place (Makefile is restored on exit);
+#   2. CONFIG_LOCALVERSION is emptied per target, which drops the
+#      "-aptusitu-perf" suffix that cas_defconfig carries;
+#   3. CONFIG_LOCALVERSION_AUTO is turned off, otherwise setlocalversion
+#      appends its own `git describe` output after our suffix;
+#   4. LOCALVERSION is exported, which setlocalversion appends verbatim and
+#      which also suppresses the "+" dirty marker.
+# On top of that the stray localversion-* files in the tree root have to be
+# hidden for the duration of the build: setlocalversion cats every one of them
+# into the release string.  They are moved aside (not deleted) and moved back
+# on exit.
+#
+# `uname -v` comes from scripts/mkcompile_h, which formats
+#     "#$KBUILD_BUILD_VERSION $CONFIG_FLAGS $KBUILD_BUILD_TIMESTAMP"
+# so pinning the build number and the timestamp is enough -- SMP and PREEMPT
+# already come from the arm64 Kconfig defaults and cas_defconfig.
+SPOOF_KERNEL_TRIPLE="4.19.157"
+SPOOF_LOCAL_VERSION="-perf-g19050d39787c"
+SPOOF_KERNEL_RELEASE="${SPOOF_KERNEL_TRIPLE}${SPOOF_LOCAL_VERSION}"
+SPOOF_BUILD_NUMBER=1
+# mkcompile_h expands this unquoted, so runs of whitespace collapse: passing
+# the already-normalised single-space form keeps the assertion below exact.
+SPOOF_BUILD_TIMESTAMP="Wed Jun 5 13:37:11 UTC 2024"
+
+export KBUILD_BUILD_VERSION="${SPOOF_BUILD_NUMBER}"
+export KBUILD_BUILD_TIMESTAMP="${SPOOF_BUILD_TIMESTAMP}"
 export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-builder}"
 export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-ci}"
+
+SPOOF_VERSION_MAJOR="${SPOOF_KERNEL_TRIPLE%%.*}"
+SPOOF_VERSION_REST="${SPOOF_KERNEL_TRIPLE#*.}"
+SPOOF_VERSION_MINOR="${SPOOF_VERSION_REST%%.*}"
+SPOOF_VERSION_PATCH="${SPOOF_VERSION_REST#*.}"
+SPOOF_BACKUP_DIR=".spoof-backup"
+
+restore_build_metadata() {
+    local f
+    for f in "${SPOOF_BACKUP_DIR}"/localversion-*; do
+        [ -e "$f" ] || continue
+        mv -f "$f" "$(basename "$f")"
+    done
+    if [ -f "${SPOOF_BACKUP_DIR}/Makefile" ]; then
+        mv -f "${SPOOF_BACKUP_DIR}/Makefile" Makefile
+    fi
+    rmdir "${SPOOF_BACKUP_DIR}" 2>/dev/null || true
+}
+trap restore_build_metadata EXIT
+
+mkdir -p "${SPOOF_BACKUP_DIR}"
+cp -a Makefile "${SPOOF_BACKUP_DIR}/Makefile"
+sed -i \
+    -e "s/^VERSION = .*/VERSION = ${SPOOF_VERSION_MAJOR}/" \
+    -e "s/^PATCHLEVEL = .*/PATCHLEVEL = ${SPOOF_VERSION_MINOR}/" \
+    -e "s/^SUBLEVEL = .*/SUBLEVEL = ${SPOOF_VERSION_PATCH}/" \
+    Makefile
+for f in localversion-*; do
+    [ -e "$f" ] || continue
+    mv -f "$f" "${SPOOF_BACKUP_DIR}/"
+done
+export LOCALVERSION="${SPOOF_LOCAL_VERSION}"
+echo "[*] Build metadata pinned: ${SPOOF_KERNEL_RELEASE} / #${SPOOF_BUILD_NUMBER} ${SPOOF_BUILD_TIMESTAMP}"
 
 export USE_CCACHE=1
 export CROSS_COMPILE="aarch64-linux-gnu-"
@@ -261,6 +330,18 @@ build_target() {
     echo "[*] Injecting Baseband-guard configuration..."
     scripts/config --file "${OUT_DIR}/.config" -e BBG
 
+    # 1a. Build metadata masquerade (Always applied)
+    # Companion of the "Build metadata masquerade" block near the top of this
+    # script: that block pins LOCALVERSION and the Makefile version triple, this
+    # one clears the per-target config that would otherwise be appended to the
+    # release string by scripts/setlocalversion.
+    #   - CONFIG_LOCALVERSION carries "-aptusitu-perf" in cas_defconfig;
+    #   - CONFIG_LOCALVERSION_AUTO defaults to y in init/Kconfig and would add
+    #     `git describe` output after our suffix.
+    echo "[*] Pinning kernel release to ${SPOOF_KERNEL_RELEASE}..."
+    scripts/config --file "${OUT_DIR}/.config" --set-str LOCALVERSION ""
+    scripts/config --file "${OUT_DIR}/.config" -d LOCALVERSION_AUTO
+
     # 1b. Compiler optimisation level (Always applied)
     # Pin the "Compiler optimization level" choice to CC_OPTIMIZE_FOR_PERFORMANCE
     # (-O2).  The Kconfig default already is -O2, but pinning it here means a
@@ -341,6 +422,42 @@ build_target() {
     # ----------------------------------------------------
     echo "[*] Building kernel..."
     make "${MAKE_OPTS[@]}" 
+
+    # ----------------------------------------------------
+    # Build metadata verification
+    # ----------------------------------------------------
+    # Fail loudly here rather than shipping a zip whose uname -r / uname -v
+    # differ from the pinned values.  include/generated/utsrelease.h feeds
+    # UTS_RELEASE (uname -r), include/generated/compile.h feeds UTS_VERSION
+    # (uname -v); both are generated fresh on every build.
+    echo "[*] Verifying pinned build metadata..."
+    local UTSRELEASE_H="${OUT_DIR}/include/generated/utsrelease.h"
+    local COMPILE_H="${OUT_DIR}/include/generated/compile.h"
+    local IMAGE_BIN="${OUT_DIR}/arch/arm64/boot/Image"
+
+    if ! grep -qxF "#define UTS_RELEASE \"${SPOOF_KERNEL_RELEASE}\"" "${UTSRELEASE_H}"; then
+        echo "[-] UTS_RELEASE mismatch, expected \"${SPOOF_KERNEL_RELEASE}\", got:"
+        grep "UTS_RELEASE" "${UTSRELEASE_H}" || true
+        exit 1
+    fi
+    if ! grep -qxF "#define UTS_VERSION \"#${SPOOF_BUILD_NUMBER} SMP PREEMPT ${SPOOF_BUILD_TIMESTAMP}\"" "${COMPILE_H}"; then
+        echo "[-] UTS_VERSION mismatch, expected \"#${SPOOF_BUILD_NUMBER} SMP PREEMPT ${SPOOF_BUILD_TIMESTAMP}\", got:"
+        grep "UTS_VERSION" "${COMPILE_H}" || true
+        exit 1
+    fi
+    # init/version.c builds linux_banner as
+    #   "Linux version " UTS_RELEASE " (" USER "@" HOST ") (" COMPILER ") " UTS_VERSION
+    # so both pinned strings have to show up contiguously in the image itself,
+    # not merely in the generated headers.
+    if ! grep -aqF "Linux version ${SPOOF_KERNEL_RELEASE}" "${IMAGE_BIN}"; then
+        echo "[-] ${IMAGE_BIN} does not embed \"Linux version ${SPOOF_KERNEL_RELEASE}\""
+        exit 1
+    fi
+    if ! grep -aqF "#${SPOOF_BUILD_NUMBER} SMP PREEMPT ${SPOOF_BUILD_TIMESTAMP}" "${IMAGE_BIN}"; then
+        echo "[-] ${IMAGE_BIN} does not embed \"#${SPOOF_BUILD_NUMBER} SMP PREEMPT ${SPOOF_BUILD_TIMESTAMP}\""
+        exit 1
+    fi
+    echo "[+] Build metadata verified: ${SPOOF_KERNEL_RELEASE} / #${SPOOF_BUILD_NUMBER} SMP PREEMPT ${SPOOF_BUILD_TIMESTAMP}"
 
     # Restore DTS backup for MIUI
     if [ "$OS_TYPE" == "miui" ]; then
