@@ -161,6 +161,9 @@ jobs:
     - name: Upload Flashable ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: MIUI_cas_ReSukiSU-SuSFS-${{ github.run_id }}
-        path: APTKernel_*.zip
+        # build_kernel.sh 产出的 zip 本身就是完整的 AnyKernel3 刷机包
+        # （META-INF/、anykernel.sh、tools/、kernels/ 都在里面），这里只负责上传，
+        # 不做任何重新打包。compression-level: 0 让归档的字节保持原样。
+        name: AnyKernel3-${{ github.run_id }}
+        path: AnyKernel3_*.zip
         compression-level: 0 # 已经被 zip 压缩过，无需再二次压缩

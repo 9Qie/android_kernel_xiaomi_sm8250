@@ -167,6 +167,43 @@ echo "[+] AnyKernel3 adjusted successfully."
 echo "==========================================="
 
 # ==========================================
+# BakaSU version code
+# ==========================================
+# kernel/Kbuild bakes `30000 + <commits in the BakaSU checkout> + 700` into the
+# module as KSU_VERSION and also prints it as "-- BakaSU version code: <n>".
+# Read back the value the build actually used so the package name can never
+# drift from the kernel it ships.
+detect_baksu_version_code() {
+    local OUT_DIR="$1"
+    local CODE=""
+    local COUNT=""
+
+    # 1) Preferred: the -DKSU_VERSION=... flag recorded on the compiler command
+    #    line that produced drivers/kernelsu objects.
+    CODE=$(grep -rhoE -- '-DKSU_VERSION=[0-9]+' "${OUT_DIR}/drivers/kernelsu" 2>/dev/null | head -n 1 | cut -d= -f2 || true)
+    if [ -z "${CODE}" ]; then
+        # Object dir layout is not guaranteed (symlinked drivers/kernelsu), so
+        # fall back to the whole build tree before giving up.
+        CODE=$(grep -rhoE -- '-DKSU_VERSION=[0-9]+' "${OUT_DIR}" 2>/dev/null | head -n 1 | cut -d= -f2 || true)
+    fi
+
+    # 2) Fallback: recompute it the way kernel/Kbuild does.
+    if [ -z "${CODE}" ] && [ -d "${KERNEL_DIR}/KernelSU/.git" ]; then
+        COUNT=$(git -C "${KERNEL_DIR}/KernelSU" rev-list --count HEAD 2>/dev/null || true)
+        if [ -n "${COUNT}" ]; then
+            CODE=$((30000 + COUNT + 700))
+        fi
+    fi
+
+    # 3) KernelSU was not requested: keep the mandatory prefix and say so.
+    if [ -z "${CODE}" ]; then
+        CODE="NoKernelSU"
+    fi
+
+    printf '%s' "${CODE}"
+}
+
+# ==========================================
 # Modular Build Function
 # ==========================================
 build_target() {
@@ -370,21 +407,73 @@ build_target() {
             cp "${OUT_DIR}/arch/arm64/boot/dtbo.img" "anykernel/kernels/dtbo.img"
         fi
         
-        # 确定 ZIP 文件名
-        local KSU_ZIP_STR="NoKernelSU"
-        if [ "$ENABLE_KSU" -eq 1 ]; then
-            KSU_ZIP_STR="ReSukiSU-SuSFS"
+        # ------------------------------------------------------------
+        # Package name
+        # ------------------------------------------------------------
+        # Everything under anykernel/ (META-INF/, anykernel.sh, tools/,
+        # kernels/, ramdisk/, ...) already is the complete AnyKernel3
+        # installer, so the single zip built below is the flashable package
+        # itself: copy it to the phone and flash it, nothing gets wrapped
+        # around it and no second packaging pass runs afterwards.
+        #
+        #   AnyKernel3_BakaSU_<version code>_<kernel release>.zip
+        #     <version code>   numeric BakaSU version code, without the "v"
+        #     <kernel release> include/config/kernel.release, verbatim
+        local KSU_VERSION_CODE
+        KSU_VERSION_CODE=$(detect_baksu_version_code "${OUT_DIR}")
+        # The requested name carries a bare number.  A KernelSU build that
+        # cannot report one means the detection above broke, and shipping a
+        # wrongly named package would be worse than failing loudly.
+        if [ -z "${KSU_VERSION_CODE}" ]; then
+            echo "[-] Could not determine the BakaSU version code; refusing to name the package."
+            exit 1
         fi
-        local GIT_COMMIT_ID=$(git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
-        local OS_UPPER=$(echo "$OS_TYPE" | tr '[:lower:]' '[:upper:]')
-        local ZIP_FILENAME="APTKernel_${OS_UPPER}_${DEVICE_NAME}_${KSU_ZIP_STR}_$(date +'%Y%m%d_%H%M%S')_anykernel3_${GIT_COMMIT_ID}.zip"
-        
-        echo "[*] Zipping $ZIP_FILENAME ..."
+        if [ "$ENABLE_KSU" -eq 1 ] && ! echo "${KSU_VERSION_CODE}" | grep -qE '^[0-9]+$'; then
+            echo "[-] BakaSU version code '${KSU_VERSION_CODE}' is not numeric; refusing to name the package."
+            exit 1
+        fi
+
+        local KERNEL_RELEASE_FILE="${OUT_DIR}/include/config/kernel.release"
+        if [ ! -f "${KERNEL_RELEASE_FILE}" ]; then
+            echo "[-] ${KERNEL_RELEASE_FILE} is missing; cannot name the package."
+            exit 1
+        fi
+        local KERNEL_RELEASE
+        KERNEL_RELEASE=$(sed -n 1p "${KERNEL_RELEASE_FILE}" | tr -d '\r')
+        if [ -z "${KERNEL_RELEASE}" ]; then
+            echo "[-] ${KERNEL_RELEASE_FILE} is empty; cannot name the package."
+            exit 1
+        fi
+        # Spaces, slashes and anything else a file name cannot carry.
+        local KERNEL_RELEASE_SAFE="${KERNEL_RELEASE//[^A-Za-z0-9._+-]/_}"
+
+        local ZIP_FILENAME="AnyKernel3_BakaSU_${KSU_VERSION_CODE}_${KERNEL_RELEASE_SAFE}.zip"
+
+        # A `both` build compiles two targets from the same tree, so the name
+        # above can repeat.  Keep the requested name for the first target and
+        # disambiguate the second one instead of silently overwriting it.
+        if [ -e "${ZIP_FILENAME}" ]; then
+            echo "[!] ${ZIP_FILENAME} already exists, appending the target name."
+            ZIP_FILENAME="AnyKernel3_BakaSU_${KSU_VERSION_CODE}_${KERNEL_RELEASE_SAFE}-${OS_TYPE}.zip"
+        fi
+
+        echo "[*] Packaging ${OS_TYPE} into ${ZIP_FILENAME} ..."
         pushd anykernel > /dev/null
-        zip -r9 "$ZIP_FILENAME" ./* -x .git .gitignore out/ ./*.zip > /dev/null
-        mv "$ZIP_FILENAME" ../
+        zip -r9 "${ZIP_FILENAME}" ./* -x .git .gitignore out/ ./*.zip > /dev/null
+        mv "${ZIP_FILENAME}" ../
         popd > /dev/null
-        
+
+        # The zip is the deliverable, so prove it really is a flashable
+        # AnyKernel3 package and not a folder of files that still needs
+        # repacking.
+        local ENTRY
+        for ENTRY in META-INF/com/google/android/update-binary anykernel.sh tools/ak3-core.sh kernels/Image; do
+            if ! unzip -Z1 "${ZIP_FILENAME}" | grep -qxF "${ENTRY}"; then
+                echo "[-] ${ZIP_FILENAME} is not flashable: missing ${ENTRY}."
+                exit 1
+            fi
+        done
+
         echo "[+] $OS_TYPE kernel binaries successfully packed into: $ZIP_FILENAME"
     else
         echo "[-] $OS_TYPE Build Failed. Kernel Image not found."
