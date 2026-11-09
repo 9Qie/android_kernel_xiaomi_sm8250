@@ -50,13 +50,62 @@ export ARCH="arm64"
 export SUBARCH="arm64"
 
 # ccache Setup
-export CCACHE_DIR="$HOME/.cache/ccache_mikernel"
+export CCACHE_DIR="${CCACHE_DIR:-$HOME/.cache/ccache_mikernel}"
 export CCACHE_EXEC=$(command -v ccache)
 
 if [ -z "$CCACHE_EXEC" ]; then
     echo "[!] ccache not found! Please install ccache first."
     exit 1
 fi
+
+# ----------------------------------------------------
+# ccache tuning (kernel-aware caching)
+# ----------------------------------------------------
+# CCACHE_IS_KERNEL_COMPILING switches on the ECS (Effective Configuration
+# State) fast path of the ccache-ECS build.  Upstream ccache falls back to
+# full preprocessing whenever include/generated/autoconf.h changes, which is
+# exactly what happens on nearly every config tweak; ECS records per-source
+# header dependencies plus the autoconf snapshot, so an unchanged source still
+# hits directly even after unrelated CONFIG_* symbols moved.
+export CCACHE_IS_KERNEL_COMPILING=true
+export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-3G}"
+# The compiler binary is byte-identical across runs and we always feed the
+# same absolute toolchain path, so hashing it every invocation is pure waste.
+export CCACHE_COMPILERCHECK=none
+# Every CI checkout lands in the same directory but at a different absolute
+# path; without BASEDIR/NOHASHDIR every object would miss.
+export CCACHE_NOHASHDIR=true
+export CCACHE_BASEDIR="${KERNEL_DIR}"
+# A fresh git checkout rewrites every mtime, and __DATE__/__TIME__ bake the
+# build moment into a few objects.  Both would invalidate the whole cache on
+# each run, so have ccache trust content instead of timestamps here.
+export CCACHE_SLOPPINESS="time_macros,include_file_ctime,include_file_mtime,file_stat_matches,system_headers,locale"
+# Objects compress well; keeps the cache inside the GitHub cache size budget.
+ccache -o compression=true >/dev/null 2>&1 || true
+ccache -M "$CCACHE_MAXSIZE" >/dev/null 2>&1 || true
+
+# ----------------------------------------------------
+# Compiler optimisation level
+# ----------------------------------------------------
+# init/Kconfig defaults the "Compiler optimization level" choice to
+# CC_OPTIMIZE_FOR_PERFORMANCE, which is what makes the kernel build with -O2
+# instead of -Os.  This tree's Makefile gates clang's -O3 branch on cc-name,
+# a variable that is never defined on 4.19, so the -O2 branch is also what
+# actually applies; pinning both keeps it that way and keeps -O2 last on the
+# command line (KCFLAGS is appended after the Makefile's own -O flags).
+export KCFLAGS="${KCFLAGS:-} -O2 -pipe"
+
+# ----------------------------------------------------
+# Reproducible build metadata
+# ----------------------------------------------------
+# scripts/mkcompile_h bakes `date` into include/generated/compile.h, which
+# every object that includes <generated/compile.h> picks up.  Pinning the
+# timestamp and identity keeps that header byte-identical between runs so
+# ccache can serve those objects from cache instead of rebuilding them.
+# An explicitly provided value also makes the build reproducible.
+export KBUILD_BUILD_TIMESTAMP="${KBUILD_BUILD_TIMESTAMP:-Thu Jan  1 00:00:00 UTC 2026}"
+export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-builder}"
+export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-ci}"
 
 export USE_CCACHE=1
 export CROSS_COMPILE="aarch64-linux-gnu-"
@@ -203,6 +252,16 @@ build_target() {
     # 1. Baseband-guard configuration (Always applied)
     echo "[*] Injecting Baseband-guard configuration..."
     scripts/config --file "${OUT_DIR}/.config" -e BBG
+
+    # 1b. Compiler optimisation level (Always applied)
+    # Pin the "Compiler optimization level" choice to CC_OPTIMIZE_FOR_PERFORMANCE
+    # (-O2).  The Kconfig default already is -O2, but pinning it here means a
+    # future defconfig or fragment that ships CC_OPTIMIZE_FOR_SIZE cannot
+    # silently downgrade the kernel to -Os.
+    echo "[*] Pinning compiler optimization level to -O2..."
+    scripts/config --file "${OUT_DIR}/.config" \
+        -e CC_OPTIMIZE_FOR_PERFORMANCE \
+        -d CC_OPTIMIZE_FOR_SIZE
 
     # 2. KernelSU configurations
     if [ "$ENABLE_KSU" -eq 1 ]; then

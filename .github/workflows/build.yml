@@ -9,6 +9,27 @@ on:
     paths-ignore:
       - '**/*.md'
 
+permissions:
+  contents: read
+  actions: write # 清理旧 ccache 缓存条目需要写权限
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # build_kernel.sh honours an inherited CCACHE_DIR, so CI and the script
+  # always agree on which directory holds the cache.
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 2G
+  # Bump the trailing version whenever the compiler or flags change, so stale
+  # objects are not reused under a new configuration.
+  CCACHE_KEY: ccache-ecs-cas-miui-v1
+  # Past snapshots to keep.  A full kernel cache is ~0.6 GB, so this stays far
+  # below the 10 GB per-repository Actions cache quota.
+  CCACHE_KEEP: 2
+  CLANG_TAG: 16.0.6-20260807
+
 jobs:
   build-cas-miui:
     name: Build cas | MIUI | ReSukiSU-SuSFS
@@ -33,38 +54,109 @@ jobs:
         sudo apt-get install -y --no-install-recommends \
           bc bison build-essential ccache curl flex gawk git gnupg gperf \
           imagemagick libncurses-dev libssl-dev libxml2 libxml2-utils lz4 \
-          lzop pngcrush rsync schedtool squashfs-tools xsltproc zip \
+          lzop pngcrush rsync schedtool squashfs-tools xsltproc unzip zip \
           zlib1g-dev python3
         # Optional helpers: warn but never fail the job.
         for p in liblz4-tool libelf-dev; do
           sudo apt-get install -y "$p" || echo "::warning::$p unavailable"
         done
-        for c in ccache gcc make zip; do
-          command -v "$c" >/dev/null || echo "::warning::missing command $c"
-        done
-
-    - name: Cache ccache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/ccache_mikernel
-        key: ${{ runner.os }}-kernel-ccache-cas-miui-${{ github.run_id }}
-        restore-keys: |
-          ${{ runner.os }}-kernel-ccache-cas-miui-
-          ${{ runner.os }}-kernel-ccache-cas-
-          ${{ runner.os }}-kernel-ccache-
 
     - name: Setup zyc-clang 16 Toolchain
       run: |
+        # Kept at $HOME/zyc-clang because build_kernel.sh hardcodes
+        # TOOLCHAIN_BIN="$HOME/zyc-clang/bin".  Download only: the extracted
+        # tree is several GB and caching it would crowd the ccache out of the
+        # 10 GB repository quota.
         mkdir -p $HOME/zyc-clang
         cd $HOME/zyc-clang
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
-        tar -zxvf Clang-16.0.6-20260807.tar.gz
+        curl -fL --retry 3 -o "Clang-${CLANG_TAG}.tar.gz" \
+          "https://github.com/ZyCromerZ/Clang/releases/download/${CLANG_TAG}-release/Clang-${CLANG_TAG}.tar.gz"
+        tar -zxf "Clang-${CLANG_TAG}.tar.gz"
+        rm -f "Clang-${CLANG_TAG}.tar.gz"
+
+    - name: Install ccache-ECS
+      run: |
+        # The distro ccache is an old upstream build: no ECS fast path, so any
+        # change to include/generated/autoconf.h (i.e. nearly every CONFIG
+        # tweak) forces a full preprocessing pass and the cache stops paying
+        # for itself.  The ccache-ECS fork keeps a per-source dependency index
+        # plus an autoconf snapshot, which is what lets an unchanged object hit
+        # even after unrelated CONFIG_* symbols moved.
+        url="https://github.com/cctv18/ccache-ECS/releases/download/ccache-ECS-v1.0/linux-x86_64-glibc-binary.zip"
+        curl -fsSL "$url" -o /tmp/ccache-ecs.zip
+        rm -rf /tmp/ccache-ecs && mkdir -p /tmp/ccache-ecs
+        unzip -q /tmp/ccache-ecs.zip -d /tmp/ccache-ecs
+        bin=$(find /tmp/ccache-ecs -type f -name ccache | head -n1)
+        [ -n "$bin" ] || bin=$(find /tmp/ccache-ecs -type f -perm -u+x | head -n1)
+        if [ -z "$bin" ]; then
+          echo "::error::ccache-ECS binary not found in the release archive"
+          ls -R /tmp/ccache-ecs
+          exit 1
+        fi
+        chmod +x "$bin"
+        sudo install -m 0755 "$bin" "$(command -v ccache)"
+        ccache --version
+        # ECS only kicks in when this is set; exporting it job-wide keeps the
+        # stats calls on the same code path as the build itself.
+        echo "CCACHE_IS_KERNEL_COMPILING=true" >> "$GITHUB_ENV"
+
+    - name: Restore ccache
+      id: ccache-restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        # GitHub caches are immutable, so a fixed key would freeze the cache at
+        # its first snapshot.  A per-run key plus restore-keys always pulls in
+        # the newest existing snapshot and then stores an updated one.
+        key: ${{ env.CCACHE_KEY }}-${{ github.run_id }}
+        restore-keys: |
+          ${{ env.CCACHE_KEY }}-
+          ccache-ecs-cas-miui-
+          ccache-ecs-
+
+    - name: Report ccache state before build
+      run: |
+        mkdir -p "$CCACHE_DIR"
+        ccache -M "$CCACHE_MAXSIZE"
+        ccache -o compression=true
+        ccache -s
 
     - name: Run Build Script (cas + ksu + miui)
       run: |
         chmod +x build_kernel.sh
         echo "Executing command: ./build_kernel.sh cas ksu miui"
         ./build_kernel.sh cas ksu miui
+
+    - name: Report ccache state after build
+      if: always()
+      run: |
+        ccache -s || true
+
+    - name: Save ccache
+      if: always() && steps.ccache-restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ${{ env.CCACHE_KEY }}-${{ github.run_id }}
+
+    - name: Prune old ccache entries
+      # Without this every run leaves another snapshot behind until GitHub
+      # starts evicting entries this job still depends on.
+      if: always()
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh cache list --repo "$GITHUB_REPOSITORY" --limit 100 --json key,createdAt |
+          python3 -c 'import json,sys;print("\n".join(c["key"] for c in sorted(json.load(sys.stdin), key=lambda c: c["createdAt"], reverse=True)))' |
+          grep -E '^ccache-ecs-' |
+          tail -n +$((CCACHE_KEEP + 1)) |
+          while read -r key; do
+            [ -n "$key" ] || continue
+            echo "Deleting old ccache: $key"
+            gh cache delete "$key" --repo "$GITHUB_REPOSITORY" || true
+          done
+        gh cache list --repo "$GITHUB_REPOSITORY" --limit 20 || true
 
     - name: Upload Flashable ZIP
       uses: actions/upload-artifact@v4
