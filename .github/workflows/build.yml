@@ -10,7 +10,7 @@ on:
       - '**/*.md'
 
 permissions:
-  contents: read
+  contents: write # 发布 Release、把刷机包作为附件上传需要写权限
   actions: write # 清理旧 ccache 缓存条目需要写权限
 
 concurrency:
@@ -164,6 +164,50 @@ jobs:
         # build_kernel.sh 产出的 zip 本身就是完整的 AnyKernel3 刷机包
         # （META-INF/、anykernel.sh、tools/、kernels/ 都在里面），这里只负责上传，
         # 不做任何重新打包。compression-level: 0 让归档的字节保持原样。
+        #
+        # 注意：GitHub 的 artifact 下载时一定会再套一层 zip（这是 artifact 的
+        # 传输格式，无法关掉），所以「工件」页下载到的永远是 <name>.zip 里面再
+        # 放一个刷机包。想一步到位直接拿到可刷的 zip，请用下面的 Release 附件。
         name: AnyKernel3-${{ github.run_id }}
         path: AnyKernel3_*.zip
         compression-level: 0 # 已经被 zip 压缩过，无需再二次压缩
+
+    - name: Publish Flashable ZIP to Release
+      # Release 附件就是磁盘上那个 zip 本身：点一下下载得到的就是能直接刷入的
+      # AnyKernel3 刷机包，不用解压，也不会再套一层容器。
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        shopt -s nullglob
+        ZIP_FILES=(AnyKernel3_*.zip)
+        if [ ${#ZIP_FILES[@]} -eq 0 ]; then
+          echo "[-] No AnyKernel3_*.zip found; nothing to publish."
+          exit 1
+        fi
+
+        for ZIP_FILE in "${ZIP_FILES[@]}"; do
+          echo "[*] Publishing ${ZIP_FILE}"
+        done
+
+        # 标签直接取内核 release 字符串（已含提交短哈希，天然唯一），
+        # Release 列表里一个标签就是一次具体的内核版本。
+        BASE_NAME=$(basename "${ZIP_FILES[0]}" .zip)
+        TAG=$(printf '%s' "${BASE_NAME}" | sed -E 's/^AnyKernel3_BakaSU_[0-9]+_//')
+        echo "[*] Release tag: ${TAG}"
+
+        NOTES=$(printf 'AnyKernel3 刷机包，可直接刷入，无需解压。\n\n- 内核 release：%s\n- 构建提交：%s\n- 构建运行：%s/%s/actions/runs/%s\n' \
+          "${TAG}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
+
+        if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+          # 同一提交重跑：标签已存在，覆盖同名附件而不是新建 Release。
+          gh release upload "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes "${NOTES}"
+        else
+          # --target 让标签精确指向这次构建的提交，而不是默认分支的当前 HEAD。
+          gh release create "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" --notes "${NOTES}" --target "${GITHUB_SHA}" --latest
+        fi
+
+        echo "[+] Release ${TAG} now carries:"
+        gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'
