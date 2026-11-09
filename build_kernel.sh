@@ -155,7 +155,15 @@ git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --dep
 echo "[+] AnyKernel3 cloned successfully."
 echo "[*] Adjusting AnyKernel3..."
 sed -i "s/^device\.name1=.*/device.name1=${DEVICE_NAME}/" anykernel/anykernel.sh
-echo "[*] AnyKernel3 adjusted successfully."
+# The upstream anykernel.sh only recognises a handful of exact MIUI flavours
+# (missi-user, missi_phone_cn-user, qssi-user, ...).  HyperOS and repacked MIUI
+# builds ship other flavours, so they fall through to the `*)` branch and the
+# installer announces "AOSP ROM detected" on a MIUI device.  This branch is the
+# one this repo builds, so make it the fallback and let the miui-* patterns win
+# over it explicitly.
+sed -i 's|^\([[:space:]]*\)\*) os="aosp"; os_string="AOSP ROM";;|\1missi*) os="miui"; os_string="MIUI ROM";;\n\1*) os="miui"; os_string="MIUI/HyperOS ROM";;|' anykernel/anykernel.sh
+grep -n 'os=' anykernel/anykernel.sh | sed -n '1,12p'
+echo "[+] AnyKernel3 adjusted successfully."
 echo "==========================================="
 
 # ==========================================
@@ -347,15 +355,19 @@ build_target() {
         echo "[+] Kernel Image path: ${OUT_DIR}/arch/arm64/boot/Image"
 
         echo "[*] Packaging to AnyKernel3 ($OS_TYPE)..."
-        # 确保独立打包：清空现有的 kernels 目录
+        # AnyKernel3's anykernel.sh does `mv $home/kernels/Image $home/Image`,
+        # i.e. it expects the payload directly under kernels/ at the zip root.
+        # Nesting it one level deeper (kernels/<os>/Image) made that mv fail
+        # silently, and flash_boot() then repacked the *stock* kernel from the
+        # boot image, so flashing succeeded but the kernel never changed.
         rm -rf anykernel/kernels/*
-        mkdir -p "anykernel/kernels/${OS_TYPE}/"
-        
-        cp "${OUT_DIR}/arch/arm64/boot/Image" "anykernel/kernels/${OS_TYPE}/"
-        cp "${OUT_DIR}/arch/arm64/boot/dtb" "anykernel/kernels/${OS_TYPE}/"
-        
+        mkdir -p anykernel/kernels
+
+        cp "${OUT_DIR}/arch/arm64/boot/Image" "anykernel/kernels/Image"
+        cp "${OUT_DIR}/arch/arm64/boot/dtb" "anykernel/kernels/dtb"
+
         if [ -f "${OUT_DIR}/arch/arm64/boot/dtbo.img" ]; then
-            cp "${OUT_DIR}/arch/arm64/boot/dtbo.img" "anykernel/kernels/${OS_TYPE}/"
+            cp "${OUT_DIR}/arch/arm64/boot/dtbo.img" "anykernel/kernels/dtbo.img"
         fi
         
         # 确定 ZIP 文件名
