@@ -330,12 +330,23 @@ jobs:
           echo "[*] Publishing ${RELEASE_FILE}"
         done
 
-        # 标签取刷机包本身的创建时间（文件 mtime，即 build_kernel.sh 打包的时刻），
-        # 按 runner 的 UTC 时区输出 YYYYMMDD_HHMMSS；标题仍与刷机包文件名一致。
         ZIP_NAME=$(basename "${ZIP_FILES[0]}")
         BASE_NAME=${ZIP_NAME%.zip}
-        TAG=$(date -u -r "${ZIP_FILES[0]}" '+%Y%m%d_%H%M%S')
         KERNEL_RELEASE=$(printf '%s' "${BASE_NAME}" | sed -E 's/^AnyKernel3_BakaSU_[0-9]+_//')
+        # 标签原先取刷机包的 mtime，而每次重跑都会重新打包、得到新的 mtime，
+        # 于是同一个提交重跑一次就多发一个 Release（仓库里攒了一串）。
+        # 现在拿内核 release 作标签：scripts/setlocalversion 已经把它附加成
+        # <release>-g<sha>，这里把 -g<sha> 摘掉再统一拼上本次提交的 12 位短
+        # SHA——同一提交重跑总落在同一个标签上，走下面的覆盖分支；换了提交
+        # 才产生新标签。缩写长度变化也不会让同一提交出现两个标签。
+        # 标题仍与刷机包文件名一致。
+        RELEASE_SHA="${KERNEL_RELEASE##*-g}"
+        RELEASE_BASE="${KERNEL_RELEASE}"
+        if [ "${RELEASE_SHA}" != "${KERNEL_RELEASE}" ] &&
+           [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{7,40}$ ]]; then
+          RELEASE_BASE="${KERNEL_RELEASE%-g"${RELEASE_SHA}"}"
+        fi
+        TAG="${RELEASE_BASE}-g${GITHUB_SHA:0:12}"
         echo "[*] Release tag: ${TAG}"
         echo "[*] Release title: ${ZIP_NAME}"
 
