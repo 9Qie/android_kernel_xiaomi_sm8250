@@ -975,9 +975,10 @@ out:
 }
 
 /*
- * For blk-mq devices, we default to using mq-deadline, if available, for single
- * queue devices.  If deadline isn't available OR we have multiple queues,
- * default to "none".
+ * For blk-mq devices, we default to using ADIOS when it was built in and
+ * CONFIG_MQ_IOSCHED_DEFAULT_ADIOS is set, otherwise mq-deadline (or bfq when
+ * that is enabled), if available, for single queue devices.  If nothing is
+ * available OR we have multiple queues, default to "none".
  */
 int elevator_init_mq(struct request_queue *q)
 {
@@ -991,7 +992,14 @@ int elevator_init_mq(struct request_queue *q)
 
 	if (unlikely(q->elevator))
 		goto out;
-	if (IS_ENABLED(CONFIG_IOSCHED_BFQ)) {
+	if (IS_ENABLED(CONFIG_MQ_IOSCHED_DEFAULT_ADIOS)) {
+		e = elevator_get(q, "adios", false);
+		/* Keep the historical default as a safety net. */
+		if (!e)
+			e = elevator_get(q, "mq-deadline", false);
+		if (!e)
+			goto out;
+	} else if (IS_ENABLED(CONFIG_IOSCHED_BFQ)) {
 		e = elevator_get(q, "bfq", false);
 		if (!e)
 			goto out;
