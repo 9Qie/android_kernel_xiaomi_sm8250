@@ -720,8 +720,15 @@ static int32_t cam_cci_set_clk_param(struct cci_device *cci_dev,
 	enum cci_i2c_master_t master = c_ctrl->cci_info->cci_i2c_master;
 	enum i2c_freq_mode i2c_freq_mode = c_ctrl->cci_info->i2c_freq_mode;
 	void __iomem *base = cci_dev->soc_info.reg_map[0].mem_base;
-	struct cam_cci_master_info *cci_master =
-		&cci_dev->cci_master_info[master];
+	struct cam_cci_master_info *cci_master;
+
+	if (master >= MASTER_MAX) {
+		CAM_ERR(CAM_CCI, "CCI%d Invalid I2C master: %d",
+			cci_dev->soc_info.index, master);
+		return -EINVAL;
+	}
+
+	cci_master = &cci_dev->cci_master_info[master];
 
 	if ((i2c_freq_mode >= I2C_MAX_MODES) || (i2c_freq_mode < 0)) {
 		CAM_ERR(CAM_CCI, "invalid i2c_freq_mode = %d", i2c_freq_mode);
