@@ -42,8 +42,48 @@ jobs:
         fetch-depth: 1
 
     - name: Set up Environment
+      # The runner image points apt at azure.archive.ubuntu.com, which
+      # occasionally stops answering: apt then loops on "Ign:" lines and the
+      # job sits there until it is cancelled.  Bound every acquire, retry on
+      # the primary mirror, and treat a stale package list as a warning — the
+      # image already ships plenty of what the kernel build needs.
+      env:
+        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo apt-get update
+        APT_OPTS=(
+          -o Acquire::http::Timeout=20
+          -o Acquire::https::Timeout=20
+          -o Acquire::Retries=1
+          -o Acquire::ForceIPv4=true
+        )
+
+        # The mirror list is what makes apt talk to azure.archive.ubuntu.com;
+        # rewriting it is the only way to dodge a dead regional mirror.
+        switch_to_primary_mirror() {
+          for f in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "$f" ] || continue
+            sudo sed -i \
+              -e 's|http://azure\.archive\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+              -e 's|https://azure\.archive\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+              -e 's|http://security\.ubuntu\.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+              "$f" || true
+          done
+        }
+
+        updated=0
+        for attempt in 1 2 3; do
+          echo "[*] apt-get update (attempt ${attempt})"
+          if sudo timeout 240 apt-get "${APT_OPTS[@]}" update; then
+            updated=1
+            break
+          fi
+          echo "::warning::apt-get update attempt ${attempt} did not finish cleanly"
+          switch_to_primary_mirror
+        done
+        if [ "$updated" -ne 1 ]; then
+          echo "::warning::apt lists may be stale; continuing with the image's own lists"
+        fi
+
         # Only the tools this kernel build actually invokes.  Older Ubuntu
         # images carried names like lib32readline-dev / liblz4-tool / libxml2 /
         # libsdl1.2-dev that no longer exist, and a single missing name makes
@@ -51,14 +91,23 @@ jobs:
         # libxml2 is a hard runtime dependency of the prebuilt lld shipped in
         # the ZyC clang tarball (it links against libxml2.so.2), so it must be
         # present or every link step dies with exit 127.
-        sudo apt-get install -y --no-install-recommends \
-          bc bison build-essential ccache curl flex gawk git gnupg gperf \
-          imagemagick libncurses-dev libssl-dev libxml2 libxml2-utils lz4 \
-          lzop pngcrush rsync schedtool squashfs-tools xsltproc unzip zip \
+        PACKAGES=(
+          bc bison build-essential ccache curl flex gawk git gnupg gperf
+          imagemagick libncurses-dev libssl-dev libxml2 libxml2-utils lz4
+          lzop pngcrush rsync schedtool squashfs-tools xsltproc unzip zip
           zlib1g-dev python3
+        )
+        if ! sudo timeout 900 apt-get "${APT_OPTS[@]}" install -y --no-install-recommends "${PACKAGES[@]}"; then
+          echo "::warning::bulk install failed; retrying package by package"
+          for p in "${PACKAGES[@]}"; do
+            sudo timeout 300 apt-get "${APT_OPTS[@]}" install -y --no-install-recommends "$p" \
+              || echo "::warning::$p unavailable"
+          done
+        fi
+
         # Optional helpers: warn but never fail the job.
         for p in liblz4-tool libelf-dev; do
-          sudo apt-get install -y "$p" || echo "::warning::$p unavailable"
+          sudo timeout 300 apt-get "${APT_OPTS[@]}" install -y "$p" || echo "::warning::$p unavailable"
         done
 
     - name: Setup zyc-clang 16 Toolchain
