@@ -118,6 +118,31 @@ echo "[*] Setting up ccache in $CCACHE_DIR..."
 mkdir -p "$CCACHE_DIR"
 
 # ==========================================
+# DTS backup / restore
+# ==========================================
+# build_target() rewrites the MIUI display panel dtsi files in place and then
+# puts the tree back.  That restore used to be plain sequential code after
+# `make`, so any build failure (set -e exits immediately) left
+# arch/arm64/boot/dts/vendor/qcom/ rewritten and .dts.bak.<os>/ behind.  The
+# next run then did `cp -a vendor/qcom .dts.bak.miui`, which nests the source
+# inside the existing backup (bak/qcom/...) and the restore promoted that
+# nested tree to be the real dts directory.  Track the backup explicitly and
+# restore from an EXIT trap so it also runs on failure.
+DTS_BACKUP_ACTIVE=0
+DTS_SOURCE_PATH=""
+DTS_BACKUP_PATH=""
+
+restore_dts_backup() {
+    if [ "${DTS_BACKUP_ACTIVE}" -eq 1 ]; then
+        echo "[*] Restoring DTS backups..."
+        rm -rf "${DTS_SOURCE_PATH}"
+        mv "${DTS_BACKUP_PATH}" "${DTS_SOURCE_PATH}"
+        DTS_BACKUP_ACTIVE=0
+    fi
+}
+trap restore_dts_backup EXIT
+
+# ==========================================
 # KernelSU Setup
 # ==========================================
 if [ "$ENABLE_KSU" -eq 1 ]; then
@@ -236,7 +261,13 @@ build_target() {
 
     if [ "$OS_TYPE" == "miui" ]; then
         echo "[*] Applying MIUI DTS patches..."
+        # cp -a into an existing directory nests the source inside it, so a
+        # leftover backup from an earlier failed run has to go first.
+        rm -rf "${DTS_BACKUP}"
         cp -a "${DTS_SOURCE}" "${DTS_BACKUP}"
+        DTS_SOURCE_PATH="${KERNEL_DIR}/${DTS_SOURCE}"
+        DTS_BACKUP_PATH="${KERNEL_DIR}/${DTS_BACKUP}"
+        DTS_BACKUP_ACTIVE=1
         
         # Apply MIUI specific sed patches to dts
         sed -i 's/<154>/<1537>/g' ${DTS_SOURCE}/dsi-panel-j1s* || true
@@ -379,12 +410,8 @@ build_target() {
     echo "[*] Building kernel..."
     make "${MAKE_OPTS[@]}" 
 
-    # Restore DTS backup for MIUI
-    if [ "$OS_TYPE" == "miui" ]; then
-        echo "[*] Restoring DTS backups..."
-        rm -rf "${DTS_SOURCE}"
-        mv "${DTS_BACKUP}" "${DTS_SOURCE}"
-    fi
+    # Restore DTS backup for MIUI (also runs from the EXIT trap on failure)
+    restore_dts_backup
 
     echo "==========================================="
     if [ -f "${OUT_DIR}/arch/arm64/boot/Image" ]; then
