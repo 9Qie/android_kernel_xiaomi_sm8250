@@ -111,6 +111,7 @@ struct xt_hashlimit_htable {
 	int use;
 	u_int8_t family;
 	bool rnd_initialized;
+	bool ratematch;
 
 	struct hashlimit_cfg3 cfg;	/* config */
 
@@ -313,6 +314,7 @@ static int htable_create(struct net *net, struct hashlimit_cfg3 *cfg,
 	hinfo->count = 0;
 	hinfo->family = family;
 	hinfo->rnd_initialized = false;
+	hinfo->ratematch = !!(cfg->mode & XT_HASHLIMIT_RATE_MATCH);
 	hinfo->name = kstrdup(name, GFP_KERNEL);
 	if (!hinfo->name) {
 		vfree(hinfo);
@@ -880,7 +882,10 @@ static int hashlimit_mt_check_common(const struct xt_mtchk_param *par,
 	}
 
 	/* Check for overflow. */
-	if (revision >= 3 && cfg->mode & XT_HASHLIMIT_RATE_MATCH) {
+	if (cfg->mode & XT_HASHLIMIT_RATE_MATCH) {
+		if (revision < 3)
+			return -EINVAL;
+
 		if (cfg->avg == 0 || cfg->avg > U32_MAX) {
 			pr_info_ratelimited("invalid rate\n");
 			return -ERANGE;
@@ -913,6 +918,14 @@ static int hashlimit_mt_check_common(const struct xt_mtchk_param *par,
 			mutex_unlock(&hashlimit_mutex);
 			return ret;
 		}
+	} else if (!!(cfg->mode & XT_HASHLIMIT_RATE_MATCH) !=
+		   (*hinfo)->ratematch) {
+		/* The dsthash_ent rateinfo area is a union whose layout depends
+		 * on this flag, so rules sharing a table must agree on it.
+		 */
+		mutex_unlock(&hashlimit_mutex);
+		htable_put(*hinfo);
+		return -EINVAL;
 	}
 	mutex_unlock(&hashlimit_mutex);
 

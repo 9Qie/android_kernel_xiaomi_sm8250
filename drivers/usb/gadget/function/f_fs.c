@@ -1337,13 +1337,15 @@ ffs_epfile_release(struct inode *inode, struct file *file)
 {
 	struct ffs_epfile *epfile = inode->i_private;
 	struct ffs_data *ffs = epfile->ffs;
-	unsigned long flags;
 
 	ENTER();
 
-	spin_lock_irqsave(&epfile->ffs->eps_lock, flags);
-	__ffs_epfile_read_buffer_free(epfile);
-	spin_unlock_irqrestore(&epfile->ffs->eps_lock, flags);
+	/* epfile->read_buffer is deliberately not freed here.  Userspace may
+	 * hold several descriptors for one endpoint, and closing one of them
+	 * must not throw away data the others are still reading.  The buffer
+	 * is released from ffs_epfiles_destroy() instead; see the comment in
+	 * struct ffs_epfile.
+	 */
 	ffs_log("%s: state %d setup_state %d flag %lu opened %u",
 		epfile->name, epfile->ffs->state, epfile->ffs->setup_state,
 		epfile->ffs->flags, atomic_read(&epfile->opened));
@@ -2099,6 +2101,7 @@ static void ffs_epfiles_destroy(struct ffs_epfile *epfiles, unsigned count)
 
 	for (; count; --count, ++epfile) {
 		BUG_ON(mutex_is_locked(&epfile->mutex));
+		__ffs_epfile_read_buffer_free(epfile);
 		if (epfile->dentry) {
 			d_delete(epfile->dentry);
 			dput(epfile->dentry);
