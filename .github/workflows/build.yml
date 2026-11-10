@@ -189,9 +189,13 @@ jobs:
 
         # 标签直接取内核 release 字符串（已含提交短哈希，天然唯一），
         # Release 列表里一个标签就是一次具体的内核版本。
-        BASE_NAME=$(basename "${ZIP_FILES[0]}" .zip)
+        ZIP_NAME=$(basename "${ZIP_FILES[0]}")
+        BASE_NAME=${ZIP_NAME%.zip}
+        # 标签取内核 release 字符串（已含提交短哈希，天然唯一）；
+        # 标题则与刷机包文件名完全一致，方便在 Release 列表里一眼对上。
         TAG=$(printf '%s' "${BASE_NAME}" | sed -E 's/^AnyKernel3_BakaSU_[0-9]+_//')
         echo "[*] Release tag: ${TAG}"
+        echo "[*] Release title: ${ZIP_NAME}"
 
         NOTES=$(printf 'AnyKernel3 刷机包，可直接刷入，无需解压。\n\n- 内核 release：%s\n- 构建提交：%s\n- 构建运行：%s/%s/actions/runs/%s\n' \
           "${TAG}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
@@ -199,10 +203,10 @@ jobs:
         if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
           # 同一提交重跑：标签已存在，覆盖同名附件而不是新建 Release。
           gh release upload "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
-          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes "${NOTES}"
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${ZIP_NAME}" --notes "${NOTES}"
         else
           # --target 让标签精确指向这次构建的提交，而不是默认分支的当前 HEAD。
-          gh release create "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --title "${TAG}" --notes "${NOTES}" --target "${GITHUB_SHA}" --latest
+          gh release create "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --title "${ZIP_NAME}" --notes "${NOTES}" --target "${GITHUB_SHA}" --latest
         fi
 
         echo "[+] Release ${TAG} now carries:"
