@@ -167,10 +167,101 @@ jobs:
         path: AnyKernel3_*.zip
         archive: false
         if-no-files-found: error
+    - name: Fetch matching BakaSU Manager
+      # 只取与本次内核 BakaSU 版本号完全一致的 arm64-v8a release 管理器 APK。
+      # 版本号取自刷机包名（build_kernel.sh 回读的 KSU_VERSION）；管理器取自
+      # BakaSU 官方 Build Manager 的 Manager-release 产物——官方 Release 里的
+      # APK 是打标签时才生成的，通常落后于 main 上的版本号，不能直接用。
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        shopt -s nullglob
+        ZIP_FILES=(AnyKernel3_*.zip)
+        if [ ${#ZIP_FILES[@]} -eq 0 ]; then
+          echo "[-] No AnyKernel3_*.zip found; cannot resolve the BakaSU version code."
+          exit 1
+        fi
+
+        ZIP_NAME=$(basename "${ZIP_FILES[0]}")
+        VERSION_CODE=$(printf '%s' "${ZIP_NAME}" | sed -nE 's/^AnyKernel3_BakaSU_([0-9]+)_.*\.zip$/\1/p')
+        if [ -z "${VERSION_CODE}" ]; then
+          # 关掉 KernelSU 构建时包名里就没有数字版本号：跳过管理器，别让内核构建白跑。
+          echo "[!] ${ZIP_NAME} carries no numeric BakaSU version code (was KernelSU disabled?)."
+          echo "[!] Shipping the kernel without a manager APK."
+          exit 0
+        fi
+        echo "[*] Kernel was built against BakaSU version code ${VERSION_CODE}"
+
+        # GITHUB_TOKEN 只保证本仓库可读；读公开的 BakaSU 仓库通常也可以，
+        # 万一被拒就退回匿名访问再试一次。
+        BAKASU_API="repos/Baka-SU/BakaSU"
+        gh_api() {
+          if gh api "$@" 2> /dev/null; then
+            return 0
+          fi
+          echo "[!] Authenticated API call failed, retrying anonymously: $*" >&2
+          env -u GH_TOKEN gh api "$@"
+        }
+
+        WORK_DIR=$(mktemp -d)
+        trap 'rm -rf "${WORK_DIR}"' EXIT
+
+        APK_NAME=""
+        SEEN=""
+        RUN_IDS=$(gh_api "${BAKASU_API}/actions/workflows/build-manager.yml/runs?branch=main&event=push&status=success&per_page=30" \
+          --jq '.workflow_runs[].id' | head -n 10 || true)
+
+        for RUN_ID in ${RUN_IDS}; do
+          ART_ID=$(gh_api "${BAKASU_API}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '.artifacts[] | select(.name == "Manager-release" and .expired == false) | .id' \
+            | head -n 1 || true)
+          [ -n "${ART_ID}" ] || continue
+
+          echo "[*] Inspecting Manager-release of BakaSU run ${RUN_ID} (artifact ${ART_ID})"
+          rm -f "${WORK_DIR}/manager.zip"
+          gh_api "${BAKASU_API}/actions/artifacts/${ART_ID}/zip" > "${WORK_DIR}/manager.zip"
+
+          MATCH=$(unzip -Z1 "${WORK_DIR}/manager.zip" \
+            | grep -E "^BakaSU_.*_${VERSION_CODE}-arm64-v8a-release\.apk$" | head -n 1 || true)
+          if [ -n "${MATCH}" ]; then
+            unzip -o -j "${WORK_DIR}/manager.zip" "${MATCH}" -d . > /dev/null
+            APK_NAME="${MATCH}"
+            break
+          fi
+
+          SEEN="${SEEN} $(unzip -Z1 "${WORK_DIR}/manager.zip" | grep -E '^BakaSU_.*-arm64-v8a-release\.apk$' | head -n 1 || true)"
+        done
+
+        if [ -z "${APK_NAME}" ]; then
+          # 上游还没为这个版本号出过管理器：宁可只发内核，也不要发版本对不上的 APK。
+          echo "[!] No BakaSU manager with version code ${VERSION_CODE} was found."
+          echo "[!] arm64-v8a flavours seen:${SEEN:- (none)}"
+          echo "[!] Shipping the kernel without a manager APK."
+          exit 0
+        fi
+
+        test -f "${APK_NAME}"
+        unzip -l "${APK_NAME}" | grep -q 'AndroidManifest.xml' || {
+          echo "[-] ${APK_NAME} is not a valid APK."
+          exit 1
+        }
+        echo "[+] Fetched ${APK_NAME} ($(stat -c%s "${APK_NAME}") bytes)"
+
+    - name: Upload BakaSU Manager
+      uses: actions/upload-artifact@v7
+      with:
+        # 与刷机包同样的理由：archive: false 让工件页下载到的就是 APK 本身。
+        # 上游尚未产出对应版本号时这里没有文件，用 warn 而不是 error，
+        # 免得一个可选附件把整次内核构建判成失败。
+        path: BakaSU_*-arm64-v8a-release.apk
+        archive: false
+        if-no-files-found: warn
 
     - name: Publish Flashable ZIP to Release
-      # Release 附件就是磁盘上那个 zip 本身：点一下下载得到的就是能直接刷入的
-      # AnyKernel3 刷机包，不用解压，也不会再套一层容器。
+      # Release 附件就是磁盘上那些文件本身：点一下下载得到的就是能直接刷入的
+      # AnyKernel3 刷机包（以及配套的 BakaSU 管理器 APK），不用解压，也不会再套容器。
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
@@ -182,32 +273,39 @@ jobs:
           echo "[-] No AnyKernel3_*.zip found; nothing to publish."
           exit 1
         fi
+        # 管理器 APK 是可选的：上游还没为这个版本号出包时这里匹配不到文件。
+        APK_FILES=(BakaSU_*-arm64-v8a-release.apk)
+        RELEASE_FILES=("${ZIP_FILES[@]}" "${APK_FILES[@]}")
 
-        for ZIP_FILE in "${ZIP_FILES[@]}"; do
-          echo "[*] Publishing ${ZIP_FILE}"
+        for RELEASE_FILE in "${RELEASE_FILES[@]}"; do
+          echo "[*] Publishing ${RELEASE_FILE}"
         done
 
-        # 标签直接取内核 release 字符串（已含提交短哈希，天然唯一），
-        # Release 列表里一个标签就是一次具体的内核版本。
+        # 标签取刷机包本身的创建时间（文件 mtime，即 build_kernel.sh 打包的时刻），
+        # 按 runner 的 UTC 时区输出 YYYYMMDD_HHMMSS；标题仍与刷机包文件名一致。
         ZIP_NAME=$(basename "${ZIP_FILES[0]}")
         BASE_NAME=${ZIP_NAME%.zip}
-        # 标签取刷机包本身的创建时间（文件 mtime，即 build_kernel.sh 打包的时刻），
-        # 按 runner 的 UTC 时区输出 YYYYMMDD_HHMMSS；标题仍与文件名一致。
         TAG=$(date -u -r "${ZIP_FILES[0]}" '+%Y%m%d_%H%M%S')
         KERNEL_RELEASE=$(printf '%s' "${BASE_NAME}" | sed -E 's/^AnyKernel3_BakaSU_[0-9]+_//')
         echo "[*] Release tag: ${TAG}"
         echo "[*] Release title: ${ZIP_NAME}"
 
-        NOTES=$(printf 'AnyKernel3 刷机包，可直接刷入，无需解压。\n\n- 内核 release：%s\n- 构建提交：%s\n- 构建运行：%s/%s/actions/runs/%s\n' \
-          "${KERNEL_RELEASE}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
+        # 管理器只有真取到对应版本号时才写进说明；printf -v 保留结尾换行。
+        MANAGER_LINE=""
+        if [ ${#APK_FILES[@]} -gt 0 ]; then
+          printf -v MANAGER_LINE -- '- BakaSU 管理器：%s\n' "${APK_FILES[0]}"
+        fi
+
+        NOTES=$(printf 'AnyKernel3 刷机包，可直接刷入，无需解压。\n\n- 内核 release：%s\n%s- 构建提交：%s\n- 构建运行：%s/%s/actions/runs/%s\n' \
+          "${KERNEL_RELEASE}" "${MANAGER_LINE}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
 
         if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
           # 同一提交重跑：标签已存在，覆盖同名附件而不是新建 Release。
-          gh release upload "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release upload "${TAG}" "${RELEASE_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --clobber
           gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --title "${ZIP_NAME}" --notes "${NOTES}"
         else
           # --target 让标签精确指向这次构建的提交，而不是默认分支的当前 HEAD。
-          gh release create "${TAG}" "${ZIP_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --title "${ZIP_NAME}" --notes "${NOTES}" --target "${GITHUB_SHA}" --latest
+          gh release create "${TAG}" "${RELEASE_FILES[@]}" --repo "${GITHUB_REPOSITORY}" --title "${ZIP_NAME}" --notes "${NOTES}" --target "${GITHUB_SHA}" --latest
         fi
 
         echo "[+] Release ${TAG} now carries:"
