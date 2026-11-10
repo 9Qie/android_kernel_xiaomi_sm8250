@@ -159,18 +159,14 @@ jobs:
         gh cache list --repo "$GITHUB_REPOSITORY" --limit 20 || true
 
     - name: Upload Flashable ZIP
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        # build_kernel.sh 产出的 zip 本身就是完整的 AnyKernel3 刷机包
-        # （META-INF/、anykernel.sh、tools/、kernels/ 都在里面），这里只负责上传，
-        # 不做任何重新打包。compression-level: 0 让归档的字节保持原样。
-        #
-        # 注意：GitHub 的 artifact 下载时一定会再套一层 zip（这是 artifact 的
-        # 传输格式，无法关掉），所以「工件」页下载到的永远是 <name>.zip 里面再
-        # 放一个刷机包。想一步到位直接拿到可刷的 zip，请用下面的 Release 附件。
-        name: AnyKernel3-${{ github.run_id }}
+        # archive: false 表示上传时不再套一层 zip，把磁盘上的这个文件原样存成工件。
+        # 于是「工件」页下载到的就是 AnyKernel3_*.zip 本身，不用再解压一次。
+        # 该模式下只能上传单个文件，工件名自动取文件名（name: 参数会被忽略）。
         path: AnyKernel3_*.zip
-        compression-level: 0 # 已经被 zip 压缩过，无需再二次压缩
+        archive: false
+        if-no-files-found: error
 
     - name: Publish Flashable ZIP to Release
       # Release 附件就是磁盘上那个 zip 本身：点一下下载得到的就是能直接刷入的
