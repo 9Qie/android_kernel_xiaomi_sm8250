@@ -1,219 +1,181 @@
-# ApartTUSITU's Xiaomi SM8250 Kernel  
+# Xiaomi Mi 10 Ultra (cas) — MIUI kernel
 
-## Warning
-**中文:**  
-内核源码仍在开发中，可能会导致一些不可预料的问题，请谨慎使用。  
-**English:**  
-The kernel source code is still under development and may cause some unpredictable problems. Please use it with caution.  
+Linux 4.19.325 (CIP `v4.19.325-cip135` / `-st19`) kernel for the **Xiaomi Mi 10
+Ultra** (`cas`), built for **MIUI** with **ReSukiSU (BakaSU) + SuSFS** root.
 
-## 目录 / Table of Contents
-- [简介 / Introduction](#简介--introduction)  
-- [特性 / Features](#特性--features)  
-- [社区 / Community](#社区--community)  
-- [支持的设备 / Supported Devices](#支持的设备--supported-devices)   
-- [构建方法 / Build Instructions](#构建方法--build-instructions)  
-  - [快速构建 / Quick Build](#快速构建--quick-build)  
-  - [手动构建 / Manual Build](#手动构建--manual-build)  
+This tree builds exactly one target. Every other device the upstream tree
+supported, and the whole Android/GKI build plumbing that this kernel never used,
+has been removed — see [What was removed](#what-was-removed).
 
----
-
-## 简介 / Introduction
-**中文:**  
-该 repo 基于 [LineageOS/android_kernel_qcom_sm8250](https://github.com/LineageOS/android_kernel_qcom_sm8250)，结合了 [Strawing 的仓库](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod) 和 [UtsavBalar1231 的仓库](https://github.com/UtsavBalar1231/kernel_xiaomi_sm8250)，以及原本的 [LineageOS/android_kernel_xiaomi_sm8250](https://github.com/LineageOS/android_kernel_xiaomi_sm8250)。一些提交同样来源于开源社区中的其他开发者。
-
-**English:**  
-This repository is based on [LineageOS/android_kernel_qcom_sm8250](https://github.com/LineageOS/android_kernel_qcom_sm8250), incorporating [Strawing's repository](https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod) and [UtsavBalar1231's repository](https://github.com/UtsavBalar1231/kernel_xiaomi_sm8250), as well as the original [LineageOS/android_kernel_xiaomi_sm8250](https://github.com/LineageOS/android_kernel_xiaomi_sm8250). Some commits also originate from other developers in the open-source community.  
+| | |
+|---|---|
+| Device | Xiaomi Mi 10 Ultra (`cas`, M2007J1SC) |
+| Kernel | 4.19.325, CIP `cip135` / `-st19` base |
+| Target OS | MIUI |
+| Root | ReSukiSU (BakaSU) with SuSFS |
+| Toolchain | zyc-clang 16.0.6 |
+| Output | AnyKernel3 flashable zip |
 
 ---
 
-## 特性 / Features
-**中文:**  
-本内核支持 [ReSukiSU](https://github.com/ReSukiSU/ReSukiSU) & [SuSFS](https://gitlab.com/simonpunk/susfs4ksu)。请自行安装 ReSukiSU 的管理器。NoKernelSU 版本支持应用 Magisk 和 APatch(及他们的分支)。  
+## Download
 
-**Release** 里的编译好的内核成品由 `android17-aptusitu` 分支编译，应当能在原版 MIUI/HyperOS 和第三方的基于 AOSP 的各种 Android11-17 的 ROM 上使用。欢迎大家尝试并反馈(提 Issue 或 Pull Requests)! 酷友们到 [这个帖子](https://www.coolapk.com/feed/69700122) 讨论或反馈，也可以加入 QQ 群，或者给我私信反馈!  
+Grab the latest `AnyKernel3_BakaSU_*.zip` from
+[Releases](../../releases/latest). It is the flashable package itself — flash it
+directly from a custom recovery or a kernel manager, do **not** unzip it first.
 
-以下是一些具体的功能:  
-1. F2FS 开启了 realtime discard 以更好地 TRIM 闪存  
-2. 支持 EROFS  
-3. zRAM 支持 LZO、LZ4、LZ4HC、ZSTD 等压缩算法，开启了 ZRAM_WRITEBACK，升级了 LZ4 和 ZSTD  
-4. 向后移植 5.15 BPF 和 clone3(支持安卓 16/17)  
-5. 引入 [LE9EC](https://github.com/hakavlad/le9-patch) 以优化内存  
-6. 向后移植 5.10 的 Binder，MIUI 构建引入来自 xaga 的 millet，AOSP 构建引入 [Re:Kernel](https://github.com/Sakion-Team/Re-Kernel)  
-7. 修复[电量卡在 1% 的问题](https://github.com/liyafe1997/Xiaomi-fix-battery-one-percent)，并且支持解容  
-8. 集成 [BBG(Baseband-guard)](https://github.com/vc-teahouse/Baseband-guard)    
+The matching `BakaSU_*_arm64-v8a-release.apk` manager is published alongside it.
 
-**English:**  
-This kernel supports [ReSukiSU](https://github.com/ReSukiSU/ReSukiSU) & [SuSFS](https://gitlab.com/simonpunk/susfs4ksu).  
-Please install the ReSukiSU Manager by yourself.  
-The NoKernelSU version supports Magisk and APatch (and their forks).  
+## Flash
 
-The prebuilt kernel in the **Release** section is compiled from the `android17-aptusitu` branch, and should work on stock MIUI/HyperOS as well as third-party AOSP-based ROMs for Android 11–17.  
-Feedback is welcome (via Issues or Pull Requests)! Coolapk users can join the discussion in [this post](https://www.coolapk.com/feed/69700122), you can also join my QQ group, or send me private feedback.  
+1. Boot into a custom recovery (or use a kernel manager that accepts AnyKernel3).
+2. Flash `AnyKernel3_BakaSU_<version>_<kernel-release>.zip`.
+3. Reboot. Install the matching BakaSU manager APK to manage root.
 
-Below are some of the key features:  
-1. F2FS with realtime discard enabled for improved flash TRIM behavior  
-2. Support for EROFS  
-3. zRAM with support for multiple compression algorithms, including LZO, LZ4, LZ4HC, and ZSTD, enabled ZRAM_WRITEBACK, upgraded LZ4 and ZSTD  
-4. Backported BPF from Linux 5.15 and clone3 (Android 16/17 compatible)  
-5. Introduced [LE9EC](https://github.com/hakavlad/le9-patch) to optimize memory  
-6. Backported Binder from 5.10; MIUI builds incorporate millet from xaga, while AOSP builds incorporate [Re:Kernel](https://github.com/Sakion-Team/Re-Kernel)  
-7. Fixes [the issue where the battery percentage gets stuck at 1%](https://github.com/liyafe1997/Xiaomi-fix-battery-one-percent), and supports recognizing higher-capacity replacement batteries  
-8. Integrate [BBG(Baseband-guard)](https://github.com/vc-teahouse/Baseband-guard)  
+The package only replaces the kernel inside `boot`; it does not touch `dtbo`,
+`vendor_boot` or user data. To roll back, flash the stock `boot` image you saved
+beforehand.
 
----
+## Build
 
-## 社区 / Community
-**中文:**  
-欢迎加入 ApartTUSITU's QQ 交流群: [700675046](https://qm.qq.com/q/Md7nXA3Toa)。  
+### GitHub Actions (recommended)
 
-**English:**  
-Join ApartTUSITU's QQ Group: [700675046](https://qm.qq.com/q/Md7nXA3Toa)。  
+Push to `bakasu-cas`, or run the **`Build MIUI_cas_ReSukiSU-SuSFS`** workflow
+manually from the Actions tab. The single job runs:
 
----
+```sh
+./build_kernel.sh cas ksu miui
+```
 
-## 支持的设备 / Supported Devices
-| 设备代号 / Codename  | 设备名称 / Device Name            |
-|---------------------|-----------------------------------|
-| psyche              | Xiaomi 12X                        |
-| thyme               | Xiaomi 10S                        |
-| umi                 | Xiaomi 10                         |
-| munch               | Redmi K40S / POCO F4              |
-| lmi                 | Redmi K30 Pro / POCO F2 Pro       |
-| cmi                 | Xiaomi 10 Pro                     |
-| cas                 | Xiaomi 10 Ultra                   |
-| apollo              | Xiaomi 10T / Redmi K30S Ultra     |
-| alioth              | Xiaomi 11X / POCO F3 / Redmi K40  |
-| elish               | Xiaomi Pad 5 Pro                  |
-| enuma               | Xiaomi Pad 5 Pro 5G               |
-| dagu                | Xiaomi Pad 5 Pro 12.4             |
-| pipa                | Xiaomi Pad 6                      |
+and publishes the resulting AnyKernel3 zip plus the matching BakaSU manager APK
+as a Release. ccache is restored and saved between runs, so only the first build
+is slow.
 
----
+### Locally
 
-## 构建方法 / Build Instructions
+You need an `aarch64` clang toolchain, `make`, `bc`, `bison`, `flex`, `zip`,
+`unzip` and `ccache`.
 
-### 快速构建 / Quick Build
-**中文:**  
-1. fork 本仓库(别忘了点个 Star~)  
-2. 进入 **Actions**  
-3. 如果你要为所有支持的设备编译内核，找到 `Build All Devices Kernel (Matrix Parallel + Release)`，点击 `Run workflow`  
-4. 如果你要为单个设备编译内核，找到 `Build Kernel`， 点击 `Run workflow` 并选择必要内容  
+```sh
+# The script expects the toolchain at $HOME/zyc-clang/bin — put yours there,
+# or edit TOOLCHAIN_BIN at the top of build_kernel.sh.
+mkdir -p $HOME/zyc-clang && cd $HOME/zyc-clang
+curl -fLO https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
+tar -zxf Clang-16.0.6-20260807.tar.gz
 
-**English:**  
-1. Fork this repo (don’t forget to leave a Star~)  
-2. Go to **Actions**  
-3. If you want to compile the kernel for all supported devices, find `Build All Devices Kernel (Matrix Parallel + Release)` and click `Run workflow`  
-4. If you want to compile the kernel for a single device, find `Build Kernel`, click `Run workflow`, and select the necessary options  
+cd /path/to/this/repo
+./build_kernel.sh cas ksu miui
+```
 
----
+The zip lands in the repository root; the build tree goes to `out_miui/` (or
+`out_aosp/`, one per target).
 
-### 手动构建 / Manual Build
-**中文:**  
-1. 准备基本构建环境。  
-   需要常用工具链 `git`、`make`、`curl`、`bison`、`flex`、`zip` 等，以及一些软件包。  
-   - 在 Debian/Ubuntu:  
-   ```
-   sudo apt install build-essential git curl wget bison flex zip bc cpio libssl-dev ccache tar
-   ```
-   还需要 `python` (仅有 `python3` 不够)，可安装:  
-   ```
-   sudo apt install python-is-python3
-   ```
+#### Arguments
 
-   - 在 RHEL/RPM 系统:  
-   ```
-   sudo yum groupinstall 'Development Tools'
-   sudo yum install wget bc openssl-devel ccache tar
-   ```
+```
+./build_kernel.sh <device> [ksu] [miui|aosp]
+```
 
-   注意：`build.sh` 中启用了 `ccache`，路径是 `$HOME/.cache/ccache_mikernel`。可修改或删除。  
+`<device>` must be `cas` — it selects `arch/arm64/configs/cas_defconfig`, and
+that is the only defconfig left in the tree. `ksu` enables ReSukiSU + SuSFS;
+omitting it produces a kernel with no root. For the target OS, `miui` and `aosp`
+select one; giving neither builds both, one after the other. CI always passes
+`miui`.
 
-2. 下载 [ZyC-Clang v16](https://github.com/ZyCromerZ/Clang/releases/tag/16.0.6-20260807-release) 工具链:  
-   ```
-   mkdir zyc-clang
-   cd zyc-clang
-   wget https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
-   tar -zxvf Clang-16.0.6-20260807.tar.gz
-   cd ..
-   ```
+## Configuration
 
-3. 构建:  
-   - 不使用 KernelSU:  
-     ```
-     bash build_kernel.sh TARGET_DEVICE TARGET_OS(省略为全部编译)
-     ```
-   - 使用 KernelSU:  
-     ```
-     bash build_kernel.sh TARGET_DEVICE ksu TARGET_OS(省略为全部编译)
-     ```
+`arch/arm64/configs/cas_defconfig` is the base config. `build_kernel.sh`
+layers on top of it before compiling:
 
-   示例:  
-   - lmi (Redmi K30 Pro/POCO F2 Pro) 不使用 KernelSU，为 MIUI 编译:  
-     ```
-     bash build_kernel.sh lmi miui
-     ```
-   - cmi (Xiaomi 10 Pro) 使用 KernelSU，为 MIUI 编译:  
-     ```
-     bash build_kernel.sh cmi ksu miui
-     ```
-   - umi (Xiaomi 10) 使用 KernelSU，为 AOSP 和 MIUI 编译:  
-     ```
-     bash build_kernel.sh umi ksu
-     ```
+- **Always** — Baseband-guard (`BBG`), and the optimization level pinned to
+  `-O2` so a future fragment cannot silently drop the kernel to `-Os`.
+- **With `ksu`** — `KSU`, `THREAD_INFO_IN_TASK`, `KSU_SUSFS`. The hook variant
+  is a Kconfig `choice`, so `KSU_TRACEPOINT_HOOK` and `KSU_MANUAL_HOOK` are
+  switched off first; this 4.19 tree uses the SuSFS inline-hook variant.
+- **With `miui`** — `STATIC_USERMODEHELPER_PATH=/system/bin/micd`, `XIAOMI_MIUI`,
+  `MIGT`, `MIHW`, `MILLET_*`, `MIUI_ZRAM_MEMORY_TRACKING`, `BINDER_OPT`,
+  `PERF_*`, `RTMM`, `BOOTUP_RECLAIM`, `MI_RECLAIM`, `OVERLAY_FS`,
+  `PACKAGE_RUNTIME_INFO`, `KPERFEVENTS`, `TASK_DELAY_ACCT`, `LTO_NONE`
+  (clang LTO off), `SHADOW_CALL_STACK` off, `REKERNEL` off.
 
-   另外，`buildall.sh` 可一次性为所有设备构建。  
+The MIUI build also patches a handful of DSI panel timing tables in
+`arch/arm64/boot/dts/vendor/qcom/` before compiling and restores them from a
+backup afterwards, so the working tree is left clean.
 
-**English:**  
-1. Prepare the build environment.  
-   You need `git`, `make`, `curl`, `bison`, `flex`, `zip`, etc.  
-   - On Debian/Ubuntu:  
-   ```
-   sudo apt install build-essential git curl wget bison flex zip bc cpio libssl-dev ccache tar
-   ```
-   You also need `python` (not just `python3`):  
-   ```
-   sudo apt install python-is-python3
-   ```
+## What was removed
 
-   - On RHEL/RPM-based OS:  
-   ```
-   sudo yum groupinstall 'Development Tools'
-   sudo yum install wget bc openssl-devel ccache tar
-   ```
+The tree used to carry twelve Xiaomi sm8250 devices plus the full Qualcomm
+reference set, and the Android/GKI build system (`AndroidKernel.mk`,
+`Android.bp`, `build.config.*`, `android/`, and so on) that `build_kernel.sh`
+never invoked. None of it was reachable from the `cas` build graph, so all of it
+is gone:
 
-   Note: `ccache` is enabled in `build.sh` (`$HOME/.cache/ccache_mikernel`). You may remove/modify it.  
+- **Device trees** — a closure over `#include` from the four roots the build
+  actually uses (`kona.dts`, `kona-v2.dts`, `kona-v2.1.dts`,
+  `cas-sm8250-overlay.dts`) leaves 107 of the 1055 files under
+  `arch/arm64/boot/dts/vendor/qcom`. The other 948, the 27 generic SoC trees
+  under `arch/arm64/boot/dts/` that the Makefile never descends into, the stale
+  `vendor/xiaomi/` duplicate, and `vendor/bindings/` (every include resolves
+  through `<dt-bindings/...>` instead) are removed.
+- **Configs** — only `cas_defconfig`, `cas_stock-defconfig` and the generic
+  `defconfig` fallback remain. The other devices' defconfigs, `AOSP_defconfig/`
+  and `configs/vendor/` were referenced only by `kernel/Makefile`'s per-device
+  `config_data.gz` rules, by a python2 `scripts/build-all.py` nothing calls, and
+  by `scripts/update_defconfig` pointing at a directory that did not exist.
+- **Build system** — everything Android/GKI, plus `buildall.sh` (a thirteen
+  device loop; CI has always called `build_kernel.sh cas ksu miui` directly).
 
-2. Download [ZyC-Clang v16](https://github.com/ZyCromerZ/Clang/releases/tag/16.0.6-20260807-release) toolchain:  
-   ```
-   mkdir zyc-clang
-   cd zyc-clang
-   wget https://github.com/ZyCromerZ/Clang/releases/download/16.0.6-20260807-release/Clang-16.0.6-20260807.tar.gz
-   tar -zxvf Clang-16.0.6-20260807.tar.gz
-   cd ..
-   ```
+The three Makefiles were reduced to match: `vendor/qcom/Makefile` keeps only the
+`cas` stanza (`kona.dtb`, `kona-v2.dtb` and `kona-v2.1.dtb` are still produced
+through their `dtbo-base` dependency), `arch/arm64/boot/dts/Makefile` drops the
+now-empty SoC list, and `kernel/Makefile` embeds `cas_stock-defconfig`
+unconditionally for MIUI.
 
-3. Build:  
-   - Without KernelSU:  
-     ```
-     bash build_kernel.sh TARGET_DEVICE TARGET_OS(omit to build for all)
-     ```
-   - With KernelSU:  
-     ```
-     bash build.sh TARGET_DEVICE ksu TARGET_OS(omit to build for all)
-     ```
+## Kernel changes on top of CIP
 
-   Example:  
-    - lmi (Redmi K30 Pro/POCO F2 Pro) without KernelSU, compile for MIUI:  
-      ```
-      bash build_kernel.sh lmi miui
-      ```
-    - cmi (Xiaomi 10 Pro) with KernelSU, compile for MIUI:  
-      ```
-      bash build_kernel.sh cmi ksu miui
-      ```
-    - umi (Xiaomi 10) with KernelSU, compile for AOSP and MIUI:  
-      ```
-      bash build_kernel.sh umi ksu
-      ```
+Two rounds of work sit on top of the upstream 4.19.325 tree.
 
-   Additionally, `buildall.sh` can build for all supported devices at once.  
+**Ported from `PORTING_GUIDE.md`** — an Android-relevant lockdown pass:
+adreno ioctl size check, qrtr overflow, binder transaction use-after-free,
+audit/selinux/f2fs/netfilter/net-sched fixes, audio compress locking, USB OTG
+null deref, cpufreq hotplug race, sdcardfs negative dentry, camera request
+manager UAF / CCI out-of-bounds / JPEG bounds, and per-domain GIDs for
+`Android/data` and `Android/obb`.
+
+**Backported from `v4.19.325-cip136`** (`-st20`) — 25 further fixes, each
+verified reachable against the actual compiled configuration rather than the
+defconfig:
+
+- out-of-bounds and info-leak fixes: rndis query, net1080 pad byte,
+  `nf_conntrack_irc` DCC parsing, ebtables match names, uvc SEND_RESPONSE
+  length, igmp multicast hash teardown, `af_packet` ring restart, evdev
+  `input_event` padding, evdev `array_index_nospec`
+- reference-counting and validation: qrtr `init_net` restriction, xt_nat family
+  check, nf_log MAC header, IPv6 MLD timer UAF, IPv6 FIB dump cursor, cls_bpf
+  rollback recursion, xt_hashlimit rate-match, f_fs read buffer lifetime
+- SCTP: `auth_hmacs` sizing, embedded address parameter length, stale-cookie
+  error cause, stream reset counts, expired cookie vtag match, auth chunk
+  capacity
+
+Plus two USB fixes: `msm-ssusb-qmp` no longer touches the DP-combo PHY's
+registers on the USB3-only PHY (which exposes only `0x1000` bytes and oopses),
+and `xhci-plat` skips port accesses across a runtime-suspended system PM.
+
+Everything was validated by a full CI build; no runtime testing was done for
+the individual patches.
+
+## Credits
+
+- [CIP](https://gitlab.com/cip-project/cip-kernel/linux-cip) — `4.19.325-cip135`
+  / `-st19` base and the fixes backported from `cip136`.
+- [ReSukiSU / BakaSU](https://github.com/Baka-SU/BakaSU) — KernelSU fork and the
+  manager APK.
+- [ApartTUSITU](https://github.com/ApartTUSITU) — the multi-device sm8250 tree
+  this one was pruned from.
+- [AnyKernel3](https://github.com/osm0sis/AnyKernel3) — the flashable zip
+  template.
+- [ZyCromerZ](https://github.com/ZyCromerZ/Clang) — clang 16 toolchain.
+
+## License
+
+GPL-2.0, as the kernel itself. See [COPYING](COPYING).
