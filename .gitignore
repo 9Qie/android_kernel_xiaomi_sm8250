@@ -137,3 +137,9 @@ kernel/configs/android-*.cfg
 
 out_miui/
 out_aosp/
+
+# Build-time checkouts and outputs of build_kernel.sh
+/anykernel/
+/KernelSU/
+/AnyKernel3_*.zip
+/BakaSU_*.apk

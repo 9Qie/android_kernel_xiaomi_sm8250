@@ -43,7 +43,7 @@ done
 # Configuration & Environment
 # ==========================================
 KERNEL_DIR="$(pwd)"
-TOOLCHAIN_BIN="$HOME/zyc-clang/bin"
+TOOLCHAIN_BIN="${TOOLCHAIN_BIN:-$HOME/zyc-clang/bin}"
 
 export PATH="${TOOLCHAIN_BIN}:${PATH}"
 export ARCH="arm64"
@@ -164,7 +164,16 @@ echo "[*] Downloading and running Baseband-guard remote setup script..."
 wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
 
 echo "[*] Patching security/Kconfig for baseband_guard..."
-sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
+# The help keyword is indented in this file, so the range has to allow leading
+# whitespace: with a column-0 /^help$/ the address never terminates and the
+# substitution keeps running to EOF, where any future `default` line that
+# happens to mention selinux would be rewritten too.
+sed -i '/^config LSM$/,/^[[:space:]]*help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
+if ! grep -q 'baseband_guard' security/Kconfig; then
+    echo "[!] security/Kconfig does not mention baseband_guard after patching."
+    echo "[!] The Baseband-guard setup script probably changed security/Kconfig."
+    exit 1
+fi
 echo "[+] Baseband-guard setup finished."
 echo "==========================================="
 
@@ -400,6 +409,17 @@ build_target() {
     # We always need to re-evaluate dependencies because BBG is injected unconditionally
     echo "[*] Updating config (make olddefconfig)..."
     make "${MAKE_OPTS[@]}" olddefconfig
+
+    # scripts/config appends unknown symbols without complaint, and
+    # olddefconfig then discards every symbol the Kconfig tree does not know.
+    # If the remote Baseband-guard setup did not patch security/Kconfig (or
+    # patched a different file), the build would otherwise succeed and quietly
+    # ship a kernel without Baseband-guard.
+    if ! grep -qx 'CONFIG_BBG=y' "${OUT_DIR}/.config"; then
+        echo "[!] CONFIG_BBG is not set after olddefconfig."
+        echo "[!] The Baseband-guard setup or its security/Kconfig patch did not apply."
+        exit 1
+    fi
 
     # ----------------------------------------------------
     # Compilation
