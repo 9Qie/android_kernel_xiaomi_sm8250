@@ -191,14 +191,15 @@ jobs:
         # Release 列表里一个标签就是一次具体的内核版本。
         ZIP_NAME=$(basename "${ZIP_FILES[0]}")
         BASE_NAME=${ZIP_NAME%.zip}
-        # 标签取内核 release 字符串（已含提交短哈希，天然唯一）；
-        # 标题则与刷机包文件名完全一致，方便在 Release 列表里一眼对上。
-        TAG=$(printf '%s' "${BASE_NAME}" | sed -E 's/^AnyKernel3_BakaSU_[0-9]+_//')
+        # 标签取刷机包本身的创建时间（文件 mtime，即 build_kernel.sh 打包的时刻），
+        # 按 runner 的 UTC 时区输出 YYYYMMDD_HHMMSS；标题仍与文件名一致。
+        TAG=$(date -u -r "${ZIP_FILES[0]}" '+%Y%m%d_%H%M%S')
+        KERNEL_RELEASE=$(printf '%s' "${BASE_NAME}" | sed -E 's/^AnyKernel3_BakaSU_[0-9]+_//')
         echo "[*] Release tag: ${TAG}"
         echo "[*] Release title: ${ZIP_NAME}"
 
         NOTES=$(printf 'AnyKernel3 刷机包，可直接刷入，无需解压。\n\n- 内核 release：%s\n- 构建提交：%s\n- 构建运行：%s/%s/actions/runs/%s\n' \
-          "${TAG}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
+          "${KERNEL_RELEASE}" "${GITHUB_SHA}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
 
         if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
           # 同一提交重跑：标签已存在，覆盖同名附件而不是新建 Release。
