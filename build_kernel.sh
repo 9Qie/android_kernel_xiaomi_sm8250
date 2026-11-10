@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Exit on any error
-set -e
+# Exit on any error, unset variable and failing pipeline member
+set -euo pipefail
 
 # ==========================================
 # Argument Parsing
 # ==========================================
-if [ -z "$1" ]; then
+if [ -z "${1:-}" ]; then
     echo "[!] Error: No device specified."
     echo "Usage: $0 <device_name> [ksu] [miui|aosp]"
     echo "Example: $0 lmi"
@@ -16,7 +16,7 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-DEVICE_NAME="$1"
+DEVICE_NAME="${1}"
 DEFCONFIG="${DEVICE_NAME}_defconfig"
 DEFCONFIG_PATH="arch/arm64/configs/${DEFCONFIG}"
 
@@ -180,6 +180,8 @@ git clone https://github.com/liyafe1997/AnyKernel3 -b kona --single-branch --dep
 echo "[+] AnyKernel3 cloned successfully."
 echo "[*] Adjusting AnyKernel3..."
 sed -i "s/^device\.name1=.*/device.name1=${DEVICE_NAME}/" anykernel/anykernel.sh
+# This tree only builds cas, so do not advertise other devices in the package.
+sed -i '/^device\.name[2-5]=/d' anykernel/anykernel.sh
 # The upstream anykernel.sh only recognises a handful of exact MIUI flavours
 # (missi-user, missi_phone_cn-user, qssi-user, ...).  HyperOS and repacked MIUI
 # builds ship other flavours, so they fall through to the `*)` branch and the
@@ -187,7 +189,7 @@ sed -i "s/^device\.name1=.*/device.name1=${DEVICE_NAME}/" anykernel/anykernel.sh
 # one this repo builds, so make it the fallback and let the miui-* patterns win
 # over it explicitly.
 sed -i 's|^\([[:space:]]*\)\*) os="aosp"; os_string="AOSP ROM";;|\1missi*) os="miui"; os_string="MIUI ROM";;\n\1*) os="miui"; os_string="MIUI/HyperOS ROM";;|' anykernel/anykernel.sh
-grep -n 'os=' anykernel/anykernel.sh | sed -n '1,12p'
+grep -n 'os=' anykernel/anykernel.sh | sed -n '1,12p' || true
 echo "[+] AnyKernel3 adjusted successfully."
 echo "==========================================="
 
@@ -288,12 +290,8 @@ build_target() {
         sed -i 's/\/\/ qcom,mdss-dsi-pan-enable-smart-fps/qcom,mdss-dsi-pan-enable-smart-fps/g' ${DTS_SOURCE}/dsi-panel* || true
         sed -i 's/qcom,mdss-dsi-qsync-min-refresh-rate/\/\/qcom,mdss-dsi-qsync-min-refresh-rate/g' ${DTS_SOURCE}/dsi-panel* || true
 
-        sed -i 's/120 90 60/120 90 60 50 30/g' ${DTS_SOURCE}/dsi-panel-g7a-36-02-0c-dsc-video.dtsi || true
-        sed -i 's/120 90 60/120 90 60 50 30/g' ${DTS_SOURCE}/dsi-panel-g7a-37-02-0a-dsc-video.dtsi || true
-        sed -i 's/120 90 60/120 90 60 50 30/g' ${DTS_SOURCE}/dsi-panel-g7a-37-02-0b-dsc-video.dtsi || true
         sed -i 's/144 120 90 60/144 120 90 60 50 48 30/g' ${DTS_SOURCE}/dsi-panel-j3s-37-02-0a-dsc-video.dtsi || true
 
-        sed -i 's/\/\/39 00 00 00 00 00 03 51 03 FF/39 00 00 00 00 00 03 51 03 FF/g' ${DTS_SOURCE}/dsi-panel-j9-38-0a-0a-fhd-video.dtsi || true
         sed -i 's/\/\/39 00 00 00 00 00 03 51 0D FF/39 00 00 00 00 00 03 51 0D FF/g' ${DTS_SOURCE}/dsi-panel-j2-p2-1-38-0c-0a-dsc-cmd.dtsi || true
         sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j1s-42-02-0a-dsc-cmd.dtsi || true
         sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j1s-42-02-0a-mp-dsc-cmd.dtsi || true
@@ -302,7 +300,6 @@ build_target() {
         sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j2s-mp-42-02-0a-dsc-cmd.dtsi || true
         sed -i 's/\/\/39 01 00 00 00 00 03 51 00 00/39 01 00 00 00 00 03 51 00 00/g' ${DTS_SOURCE}/dsi-panel-j2-38-0c-0a-dsc-cmd.dtsi || true
         sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' ${DTS_SOURCE}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi || true
-        sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' ${DTS_SOURCE}/dsi-panel-j9-38-0a-0a-fhd-video.dtsi || true
         sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${DTS_SOURCE}/dsi-panel-j1u-42-02-0b-dsc-cmd.dtsi || true
         sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${DTS_SOURCE}/dsi-panel-j2-42-02-0b-dsc-cmd.dtsi || true
         sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${DTS_SOURCE}/dsi-panel-j2-p1-42-02-0b-dsc-cmd.dtsi || true
@@ -427,12 +424,10 @@ build_target() {
         rm -rf anykernel/kernels/*
         mkdir -p anykernel/kernels
 
+        # Only the Image goes in.  anykernel.sh has the dtb and dtbo flash
+        # steps commented out (the runtime DTB comes from the ROM's
+        # vendor_boot), so shipping them just added ~2.1MB to every zip.
         cp "${OUT_DIR}/arch/arm64/boot/Image" "anykernel/kernels/Image"
-        cp "${OUT_DIR}/arch/arm64/boot/dtb" "anykernel/kernels/dtb"
-
-        if [ -f "${OUT_DIR}/arch/arm64/boot/dtbo.img" ]; then
-            cp "${OUT_DIR}/arch/arm64/boot/dtbo.img" "anykernel/kernels/dtbo.img"
-        fi
         
         # ------------------------------------------------------------
         # Package name
@@ -455,7 +450,7 @@ build_target() {
             echo "[-] Could not determine the BakaSU version code; refusing to name the package."
             exit 1
         fi
-        if [ "$ENABLE_KSU" -eq 1 ] && ! echo "${KSU_VERSION_CODE}" | grep -qE '^[0-9]+$'; then
+        if [ "$ENABLE_KSU" -eq 1 ] && ! [[ "${KSU_VERSION_CODE}" =~ ^[0-9]+$ ]]; then
             echo "[-] BakaSU version code '${KSU_VERSION_CODE}' is not numeric; refusing to name the package."
             exit 1
         fi
@@ -493,9 +488,13 @@ build_target() {
         # The zip is the deliverable, so prove it really is a flashable
         # AnyKernel3 package and not a folder of files that still needs
         # repacking.
+        # List the archive once.  Piping into grep -q would SIGPIPE unzip as
+        # soon as it matched, and with pipefail that reads back as a failure.
+        local ZIP_ENTRIES
+        ZIP_ENTRIES=$(unzip -Z1 "${ZIP_FILENAME}")
         local ENTRY
         for ENTRY in META-INF/com/google/android/update-binary anykernel.sh tools/ak3-core.sh kernels/Image; do
-            if ! unzip -Z1 "${ZIP_FILENAME}" | grep -qxF "${ENTRY}"; then
+            if ! grep -qxF "${ENTRY}" <<< "${ZIP_ENTRIES}"; then
                 echo "[-] ${ZIP_FILENAME} is not flashable: missing ${ENTRY}."
                 exit 1
             fi
